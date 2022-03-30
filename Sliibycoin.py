@@ -3,6 +3,7 @@ import json
 from time import time
 from uuid import uuid4
 from flask import Flask, jsonify, request
+from ecdsa import VerifyingKey,BadSignatureError
 
 
 class Blockchain(object):
@@ -42,23 +43,59 @@ class Blockchain(object):
         return block
 
     # 创建新交易
-    def new_transaction(self, sender, recipient, amount):
+    def new_transaction(self, values, coinBase=False):
         # Adds a new transaction to the list of transactions(向交易列表中添加一个新的交易)
         """
                 生成新交易信息，此交易信息将加入到下一个待挖的区块中
-                :param sender: Address of the Sender  # 发送方
-                :param recipient: Address of the Recipient # 接收方
-                :param amount: Amount  # 数量
-                :return: The index of the Block that will hold this transaction # 需要将交易记录在下一个区块中
+                :param coinBase: 判断新加入的transaction是不是从coinBase产生的
+                :param values:
         """
-        self.currentTransaction.append({
-            'sender': sender,
-            'recipient': recipient,
-            'amount': amount,
-        })
+        hash_string = json.dumps(values, sort_keys=True).encode()
+        transaction_id = hashlib.sha256(hash_string).hexdigest()
+        if coinBase:
+            self.currentTransaction.insert(0, {
+                'id': transaction_id,
+                'txIns': values['txIns'],
+                'txOut': values['txOut'],
+            })
+            for transaction in self.currentTransaction:
+                for tx_out in transaction['txOut']:
+                    if tx_out['address'] == '-999':
+                        tx_out['address'] = values['txOut'][0]['address']
+        else:
+            self.currentTransaction.append({
+                'id': transaction_id,
+                'txIns': values['txIns'],
+                'txOut': values['txOut'],
+            })
 
         # 下一个待挖的区块中
         return self.last_block['index'] + 1
+
+    def transaction_validation(self, tx_in):
+        for block in self.chain:
+            for transaction in block['transactions']:
+                if tx_in['txOutId'] == transaction['id']:
+                    pre_tx_outs = transaction['txOut']
+                    # 判断输入的索引没有没问题
+                    if tx_in['txOutIndex'] >= len(pre_tx_outs):
+                        print(len(pre_tx_outs))
+                        print(tx_in['txOutIndex'])
+                        return False, 'Index gets error', 0
+                    pre_tx_out = pre_tx_outs[tx_in['txOutIndex']]
+                    # 判断输出的address和输入的signature能否验证
+                    public_key = VerifyingKey.from_string(bytes.fromhex(pre_tx_out['address']))
+                    encrypt_msg = bytes.fromhex(tx_in['signature']['encryptMsg'])
+                    raw_msg = tx_in['signature']['rawMsg']
+                    try:
+                        verify = public_key.verify(encrypt_msg, str.encode(raw_msg))
+                    except BadSignatureError:
+                        verify = False
+                    if verify:
+                        return True, 'Successfully', pre_tx_out['amount']
+                    else:
+                        return True, 'Decryption error', pre_tx_out['amount']
+        return False, "Don't find specific txOutId", 0
 
     @staticmethod
     def hash(block):
@@ -133,16 +170,78 @@ blockchain = Blockchain()
 # 创建 /transactions/new 端点，这是一个 POST 请求，我们将用它来发送数据
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():
+    """
+    输入数据格式：
+    values = {
+        "txIns": [
+            {
+                "txOutId": String,
+                "txOutIndex": Number,
+                "signature": {
+                    "encryptMsg": String,
+                    "rawMsg": String
+                }
+            },
+        ],
+        "txOut": [
+            {
+                "address": String,
+                "amount": Number
+            },
+        ]
+    }
+    """
     # 将请求参数做了处理，得到的是字典格式的，因此排序会打乱依据字典排序规则
     values = request.get_json()
  
     # 检查所需字段是否在过账数据中
-    required = ['sender', 'recipient', 'amount']
-    if not all(k in values for k in required):
+    required = ['txIns', 'txOut']
+    if not all(k in values.keys() for k in required):
         return 'Missing values', 400  # HTTP状态码等于400表示请求错误
- 
+    # 检测交易输入数据结构
+    tx_ins = values['txIns']
+    if type(tx_ins == list):
+        tx_in_required = ['txOutId', 'txOutIndex', 'signature']
+        for tx_in in tx_ins:
+            if not all(k in tx_in.keys() for k in tx_in_required):
+                return 'Missing values', 400
+            signature_required = ['encryptMsg', 'rawMsg']
+            if not all(k in tx_in['signature'].keys() for k in signature_required):
+                return 'Missing values', 400
+    else:
+        return 'Submission structure is error', 400
+    # 检测交易输出数据结构
+    tx_outs = values['txOut']
+    if type(tx_outs == list):
+        tx_out_required = ['address', 'amount']
+        for tx_out in tx_outs:
+            if not all(k in tx_out.keys() for k in tx_out_required):
+                return 'Missing values', 400
+    else:
+        return 'Submission structure is error', 400
+
+    # todo：1、检查txIns里面的所有订单号是否存在；2、订单检测private-public key；3、统计所有的coin ammount；
+    in_coin_amount = 0
+    for tx_in in tx_ins:
+        flag, msg, amount = blockchain.transaction_validation(tx_in)
+        if not flag:
+            return 'Transactions validation failed: ' + msg, 400
+        in_coin_amount += float(amount)
+    # todo：1、统计输出的coin数量，多于coin amount则出错，少于则发送给挖币人员。
+    out_coin_amount = 0
+    for tx_out in tx_outs:
+        out_coin_amount += float(tx_out['amount'])
+    if out_coin_amount > in_coin_amount:
+        return 'Output coin is larger than Input coin', 400
+    if out_coin_amount < in_coin_amount:
+        values['txOut'].append(
+            {
+                'address': '-999',
+                'amount': in_coin_amount - out_coin_amount
+            }
+        )
     # 创建新交易
-    index = blockchain.new_transaction(values['sender'], values['recipient'], values['amount'])
+    index = blockchain.new_transaction(values)
     response = {'message': f'Transaction will be added to Block {index}'}
     return jsonify(response), 201
  
@@ -156,12 +255,16 @@ def mine():
     proof = blockchain.proof_of_work(last_proof)  # 获得了一个可以实现优先创建（挖出）下一个区块的工作量证明的proof值。
  
     # 由于找到了证据，我们会收到一份奖励
-    # sender为“0”，表示此节点已挖掘了一个新货币
-    blockchain.new_transaction(
-        sender="0",
-        recipient=node_identifier,
-        amount=1,
-    )
+    # txIn为空列表，表示此节点已挖掘了一个新货币
+    address = request.args.get("address")
+    values = {
+        'txIns': [],
+        'txOut': [{
+            'address': address,
+            'amount': 50
+        }]
+    }
+    blockchain.new_transaction(values, True)
  
     # 将新块添加到链中打造新的区块
     previous_hash = blockchain.hash(last_block)  # 取出当前区块链中最长链的最后一个区块的Hash值，用作要新加入区块的前导HASH（用于连接）
