@@ -24,21 +24,27 @@ class Blockchain:
     def register_node(self, address):
         """
         Add a new node to the list of nodes
-
-        :param address: Address of node. Eg. 'http://192.168.0.5:5000'
+        
+        :param address: <string> Address of node. Eg. 'http://127.0.0.1:5000'
         """
 
         parsed_url = urlparse(address)
         if parsed_url.netloc:
             self.nodes.add(parsed_url.netloc)
         elif parsed_url.path:
-            # Accepts an URL without scheme like '192.168.0.5:5000'.
+            # Accepts an URL without scheme like '127.0.0.1:5000'.
             self.nodes.add(parsed_url.path)
         else:
             raise ValueError('Invalid URL')
 
 
     def valid_chain(self, chain):
+        """
+        Determine if a given blockchain is valid
+
+        :param chain: A blockchain
+        :return: <bool> True if valid, False if not
+        """
         last_block = chain[0]
         current_index = 1
 
@@ -52,8 +58,10 @@ class Blockchain:
             if block['previous_hash'] != last_block_hash:
                 return False
 
+
             # Check that the Proof of Work is correct
-            if not self.valid_proof(block, block['difficulty']):
+            header_hash = self.hash(block)
+            if not self.valid_proof(header_hash, block['difficulty']):
                 return False
 
             last_block = block
@@ -66,7 +74,7 @@ class Blockchain:
         This is our consensus algorithm, it resolves conflicts
         by replacing our chain with the longest one in the network.
 
-        :return: True if our chain was replaced, False if not
+        :return: <bool> True if our chain was replaced, False if not
         """
 
         neighbours = self.nodes
@@ -76,7 +84,9 @@ class Blockchain:
         max_length = len(self.chain)
 
         # Grab and verify the chains from all the nodes in our network
+        print(neighbours)
         for node in neighbours:
+            print(node)
             response = requests.get(f'http://{node}/chain')
 
             if response.status_code == 200:
@@ -84,6 +94,9 @@ class Blockchain:
                 chain = response.json()['chain']
 
                 # Check if the length is longer and the chain is valid
+                
+                is_valid_chain = self.valid_chain(chain)
+                
                 if length > max_length and self.valid_chain(chain):
                     max_length = length
                     new_chain = chain
@@ -105,10 +118,16 @@ class Blockchain:
             'difficulty': 4,
             'nonce': 0,
         }
+        self.chain.append(block)
         return block
              
     def new_block(self):
-        last_block = self.chain[-1]
+        """
+        Create a new Block in the Blockchain
+        
+        :return: <dict> New Block
+        """
+        last_block = self.last_block
         
         block = {
             'index': last_block['index'] + 1,
@@ -130,24 +149,41 @@ class Blockchain:
     
     
     def get_difficulty(self):
-        last_block = self.last_block()
-        if (last_block.index % self.block_generation_interval == 0):
+        """
+        Get and adjust the difficulty.
+        For every 10 blocks that are generated, we check if the time that took to generate those blocks 
+        are larger or smaller than the expected time.
+
+        :return: <int> the difficulty in the header of the new block
+        """
+        
+        last_block = self.last_block
+        if (last_block['index'] % self.block_generation_interval == 0):
             prev_adjustment_block = self.chain[len(self.chain) - self.difficulty_adjustment_interval]
             time_expected = self.block_generation_interval * self.difficulty_adjustment_interval
-            time_taken = last_block.timestamp - prev_adjustment_block.timestamp
+            time_taken = last_block['timestamp'] - prev_adjustment_block['timestamp']
             
             if (time_taken < time_expected / 2):
-                return prev_adjustment_block.difficulty + 1
+                return prev_adjustment_block['difficulty'] + 1
             else:
                 if (time_expected > time_expected * 2):
-                    return prev_adjustment_block.difficulty - 1
+                    return prev_adjustment_block['difficulty'] - 1
                 else: 
-                    return prev_adjustment_block.difficulty
+                    return prev_adjustment_block['difficulty']
         else:
-            return last_block.difficuly
+            return last_block['difficulty']
     
     
     def proof_of_work(self, block):
+        """
+        Simple Proof of Work Algorithm:
+
+         - Find a number 'nonce' such that hash(block header) contains leading 4 zeroes
+         -
+         
+        :param: <dict> New Block
+        :return: <int> nonce
+        """
         nonce = 0
         difficulty = block['difficulty']
         header_hash = self.hash(block)
@@ -160,7 +196,15 @@ class Blockchain:
 
     @staticmethod
     def valid_proof(header_hash, difficulty):
-        prefix_target = "0000000000"[0:difficulty]
+        """
+        Validates the Proof
+
+        :param header_hash: <string> hash of the new block header 
+        :param difficulty: <int> number of zeros in the target prefix
+        :return: <bool> True if correct, False if not.
+
+        """
+        prefix_target = "000000000000"[0:difficulty]
         guess = f'{header_hash}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:difficulty] == prefix_target
@@ -177,17 +221,18 @@ class Blockchain:
         hash_string = json.dumps(values, sort_keys=True).encode()
         transaction_id = hashlib.sha256(hash_string).hexdigest()
         if coinBase:
-            self.currentTransaction.insert(0, {
+            self.current_transactions.insert(0, {
                 'id': transaction_id,
                 'txIns': values['txIns'],
                 'txOut': values['txOut'],
             })
-            for transaction in self.currentTransaction:
+            print(self.current_transactions)
+            for transaction in self.current_transactions:
                 for tx_out in transaction['txOut']:
                     if tx_out['address'] == '-999':
                         tx_out['address'] = values['txOut'][0]['address']
         else:
-            self.currentTransaction.append({
+            self.current_transactions.append({
                 'id': transaction_id,
                 'txIns': values['txIns'],
                 'txOut': values['txOut'],
@@ -220,8 +265,20 @@ class Blockchain:
                         return True, 'Decryption error', pre_tx_out['amount']
         return False, "Don't find specific txOutId", 0
 
+
+    @property
+    def last_block(self):
+        return self.chain[-1]
+    
+    
     @staticmethod
     def hash(block):
+        """
+        Creates a SHA-256 hash of a Block
+
+        :param : <dict> Block
+        """
+        
         # We must make sure that the Dictionary is Ordered, or we'll have inconsistent hashes
         block_string = json.dumps(block, sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
@@ -315,16 +372,11 @@ def new_transaction():
     index = blockchain.new_transaction(values)
     response = {'message': f'Transaction will be added to Block {index}'}
     return jsonify(response), 201
- 
- 
-# 创建 /mine 端点，这是一个GET请求
+
+
 @app.route('/mine', methods=['GET'])
 def mine():
-    # 我们运行工作证明算法来获得下一个证明
-    last_block = blockchain.last_block  # 取出区块链现在的最后一个区块
-    last_proof = last_block['proof']  # 取出这最后 一个区块的哈希值（散列值）
-    proof = blockchain.proof_of_work(last_proof)  # 获得了一个可以实现优先创建（挖出）下一个区块的工作量证明的proof值。
- 
+    
     # 由于找到了证据，我们会收到一份奖励
     # txIn为空列表，表示此节点已挖掘了一个新货币
     address = request.args.get("address")
@@ -336,11 +388,9 @@ def mine():
         }]
     }
     blockchain.new_transaction(values, True)
- 
-    # 将新块添加到链中打造新的区块
-    previous_hash = blockchain.hash(last_block)  # 取出当前区块链中最长链的最后一个区块的Hash值，用作要新加入区块的前导HASH（用于连接）
-    block = blockchain.new_block(proof, previous_hash)  # 将新区快添加到区块链最后
- 
+    
+    block = blockchain.new_block()
+
     response = {
         'message': "New Block Forged",
         'index': block['index'],
@@ -351,20 +401,7 @@ def mine():
     return jsonify(response), 200
 
 
-@app.route('/transactions/new', methods=['POST'])
-def new_transaction():
-    values = request.get_json()
 
-    # Check that the required fields are in the POST'ed data
-    required = ['sender', 'recipient', 'amount']
-    if not all(k in values for k in required):
-        return 'Missing values', 400
-
-    # Create a new Transaction
-    index = blockchain.new_transaction(values['sender'], values['recipient'], values['amount'])
-
-    response = {'message': f'Transaction will be added to Block {index}'}
-    return jsonify(response), 201
 
 
 
