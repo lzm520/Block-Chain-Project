@@ -6,7 +6,8 @@ from uuid import uuid4
 
 import requests
 from flask import Flask, jsonify, request
-from ecdsa import VerifyingKey,BadSignatureError
+from ecdsa import VerifyingKey, BadSignatureError
+from flask_cors import CORS
 
 
 class Blockchain:
@@ -16,8 +17,7 @@ class Blockchain:
         self.nodes = set()
         self.block_generation_interval = 10
         self.difficulty_adjustment_interval = 10
-        
-        
+
         # Create the genesis block
         self.new_genesis_block()
 
@@ -36,7 +36,6 @@ class Blockchain:
             self.nodes.add(parsed_url.path)
         else:
             raise ValueError('Invalid URL')
-
 
     def valid_chain(self, chain):
         """
@@ -57,7 +56,6 @@ class Blockchain:
             last_block_hash = last_block['hash']
             if block['previous_hash'] != last_block_hash:
                 return False
-
 
             # Check that the Proof of Work is correct
             header_hash = self.hash(block)
@@ -94,9 +92,9 @@ class Blockchain:
                 chain = response.json()['chain']
 
                 # Check if the length is longer and the chain is valid
-                
+
                 is_valid_chain = self.valid_chain(chain)
-                
+
                 if length > max_length and self.valid_chain(chain):
                     max_length = length
                     new_chain = chain
@@ -107,7 +105,7 @@ class Blockchain:
             return True
 
         return False
-    
+
     def new_genesis_block(self):
         block = {
             'index': 1,
@@ -120,7 +118,7 @@ class Blockchain:
         }
         self.chain.append(block)
         return block
-             
+
     def new_block(self):
         """
         Create a new Block in the Blockchain
@@ -128,26 +126,25 @@ class Blockchain:
         :return: <dict> New Block
         """
         last_block = self.last_block
-        
+
         block = {
             'index': last_block['index'] + 1,
             'previous_hash': last_block['hash'],
             'timestamp': time(),
             'transactions': self.current_transactions,
         }
-        
+
         block['hash'] = self.hash(block)
         block['difficulty'] = self.get_difficulty()
         block['nonce'] = 0
         block['nonce'] = self.proof_of_work(block)
-        
+
         # Reset the current list of transactions
         self.current_transactions = []
 
         self.chain.append(block)
         return block
-    
-    
+
     def get_difficulty(self):
         """
         Get and adjust the difficulty.
@@ -156,24 +153,23 @@ class Blockchain:
 
         :return: <int> the difficulty in the header of the new block
         """
-        
+
         last_block = self.last_block
         if (last_block['index'] % self.block_generation_interval == 0):
             prev_adjustment_block = self.chain[len(self.chain) - self.difficulty_adjustment_interval]
             time_expected = self.block_generation_interval * self.difficulty_adjustment_interval
             time_taken = last_block['timestamp'] - prev_adjustment_block['timestamp']
-            
+
             if (time_taken < time_expected / 2):
                 return prev_adjustment_block['difficulty'] + 1
             else:
                 if (time_expected > time_expected * 2):
                     return prev_adjustment_block['difficulty'] - 1
-                else: 
+                else:
                     return prev_adjustment_block['difficulty']
         else:
             return last_block['difficulty']
-    
-    
+
     def proof_of_work(self, block):
         """
         Simple Proof of Work Algorithm:
@@ -208,7 +204,6 @@ class Blockchain:
         guess = f'{header_hash}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:difficulty] == prefix_target
-            
 
     # 创建新交易
     def new_transaction(self, values, coinBase=False):
@@ -265,12 +260,10 @@ class Blockchain:
                         return True, 'Decryption error', pre_tx_out['amount']
         return False, "Don't find specific txOutId", 0
 
-
     @property
     def last_block(self):
         return self.chain[-1]
-    
-    
+
     @staticmethod
     def hash(block):
         """
@@ -278,23 +271,23 @@ class Blockchain:
 
         :param : <dict> Block
         """
-        
+
         # We must make sure that the Dictionary is Ordered, or we'll have inconsistent hashes
         block_string = json.dumps(block, sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
 
 
-
 # Instantiate the Node
 app = Flask(__name__)
+CORS(app, supports_credentials=True)
 
 # Generate a globally unique address for this node
 node_identifier = str(uuid4()).replace('-', '')
 
 # Instantiate the Blockchain
 blockchain = Blockchain()
- 
- 
+
+
 # 创建 /transactions/new 端点，这是一个 POST 请求，我们将用它来发送数据
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():
@@ -321,7 +314,7 @@ def new_transaction():
     """
     # 将请求参数做了处理，得到的是字典格式的，因此排序会打乱依据字典排序规则
     values = request.get_json()
- 
+
     # 检查所需字段是否在过账数据中
     required = ['txIns', 'txOut']
     if not all(k in values.keys() for k in required):
@@ -376,7 +369,6 @@ def new_transaction():
 
 @app.route('/mine', methods=['GET'])
 def mine():
-    
     # 由于找到了证据，我们会收到一份奖励
     # txIn为空列表，表示此节点已挖掘了一个新货币
     address = request.args.get("address")
@@ -388,7 +380,7 @@ def mine():
         }]
     }
     blockchain.new_transaction(values, True)
-    
+
     block = blockchain.new_block()
 
     response = {
@@ -399,11 +391,6 @@ def mine():
         'previous_hash': block['previous_hash'],
     }
     return jsonify(response), 200
-
-
-
-
-
 
 
 @app.route('/chain', methods=['GET'])
