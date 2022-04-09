@@ -279,7 +279,7 @@ class Blockchain:
 
 # Instantiate the Node
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+CORS(app, supports_credentials=True, origins='*')
 
 # Generate a globally unique address for this node
 node_identifier = str(uuid4()).replace('-', '')
