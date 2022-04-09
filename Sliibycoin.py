@@ -7,7 +7,7 @@ from uuid import uuid4
 import requests
 from flask import Flask, jsonify, request
 from ecdsa import VerifyingKey, BadSignatureError
-from flask_cors import CORS
+from flask_cors import *
 
 
 class Blockchain:
@@ -290,6 +290,7 @@ blockchain = Blockchain()
 
 # 创建 /transactions/new 端点，这是一个 POST 请求，我们将用它来发送数据
 @app.route('/transactions/new', methods=['POST'])
+@cross_origin()
 def new_transaction():
     """
     输入数据格式：
@@ -368,6 +369,7 @@ def new_transaction():
 
 
 @app.route('/mine', methods=['GET'])
+@cross_origin()
 def mine():
     # 由于找到了证据，我们会收到一份奖励
     # txIn为空列表，表示此节点已挖掘了一个新货币
@@ -394,6 +396,7 @@ def mine():
 
 
 @app.route('/chain', methods=['GET'])
+@cross_origin()
 def full_chain():
     response = {
         'chain': blockchain.chain,
@@ -403,6 +406,7 @@ def full_chain():
 
 
 @app.route('/nodes/register', methods=['POST'])
+@cross_origin()
 def register_nodes():
     values = request.get_json()
 
@@ -421,6 +425,7 @@ def register_nodes():
 
 
 @app.route('/nodes/resolve', methods=['GET'])
+@cross_origin()
 def consensus():
     replaced = blockchain.resolve_conflicts()
 
