@@ -1,12 +1,13 @@
 import hashlib
 import json
-from time import time
+import threading
+from time import time, sleep
 from urllib.parse import urlparse
 from uuid import uuid4
 
 import requests
 from flask import Flask, jsonify, request
-from ecdsa import VerifyingKey, BadSignatureError
+from ecdsa import VerifyingKey, BadSignatureError, SigningKey
 from flask_cors import *
 
 
@@ -92,8 +93,6 @@ class Blockchain:
                 chain = response.json()['chain']
 
                 # Check if the length is longer and the chain is valid
-
-                is_valid_chain = self.valid_chain(chain)
 
                 if length > max_length and self.valid_chain(chain):
                     max_length = length
@@ -279,7 +278,7 @@ class Blockchain:
 
 # Instantiate the Node
 app = Flask(__name__)
-CORS(app, supports_credentials=True, origins='*')
+CORS(app, origins='*')
 
 # Generate a globally unique address for this node
 node_identifier = str(uuid4()).replace('-', '')
@@ -442,6 +441,47 @@ def consensus():
 
     return jsonify(response), 200
 
+
+@app.route('/gen_private_public_key', methods=['GET'])
+@cross_origin()
+def gen_private_public_key():
+    # 私钥
+    sk = SigningKey.generate()
+    sk_string = sk.to_string().hex()
+    # 公钥
+    vk = sk.get_verifying_key()
+    vk_string = vk.to_string().hex()
+    response = {
+        'privateKey': sk_string,
+        'publicKey': vk_string
+    }
+    return jsonify(response), 200
+
+
+@app.route('/gen_puzzle', methods=['POST'])
+@cross_origin()
+def gen_puzzle():
+    values = request.get_json()
+    private_key = values['privateKey']
+    raw_msg = values['rawMsg']
+    sk = SigningKey.from_string(bytes.fromhex(private_key))
+    encrypt_msg = sk.sign(str.encode(raw_msg)).hex()
+    response = {
+        'encryptMsg': encrypt_msg,
+        'rawMsg': raw_msg
+    }
+    return jsonify(response), 200
+
+
+def automated_solve_conflicts():
+    while True:
+        sleep(10)
+        print('Now processing consensus')
+        blockchain.resolve_conflicts()
+
+
+thread = threading.Thread(target=automated_solve_conflicts)
+thread.start()
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
