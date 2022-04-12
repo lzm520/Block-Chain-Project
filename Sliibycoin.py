@@ -212,7 +212,9 @@ class Blockchain:
                 :param coinBase: 判断新加入的transaction是不是从coinBase产生的
                 :param values:
         """
-        hash_string = json.dumps(values, sort_keys=True).encode()
+        v = values.copy()
+        v['timeStamp'] = time()
+        hash_string = json.dumps(v, sort_keys=True).encode()
         transaction_id = hashlib.sha256(hash_string).hexdigest()
         if coinBase:
             self.current_transactions.insert(0, {
